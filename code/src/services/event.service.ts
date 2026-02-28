@@ -1,36 +1,43 @@
 import pool from "../config/database";
 import { Event, EventType } from "../types";
 
+type Queryable = {
+  query: (text: string, params?: any[]) => Promise<any>;
+};
+
 export class EventService {
   async createEvent(
-    userId: string,
-    title: string,
-    description: string,
-    type: EventType,
-    deadline: Date,
-    source: "gmail" | "classroom" | "custom" | "calendar",
-    sourceId?: string
-  ): Promise<Event> {
+  userId: string,
+  title: string,
+  description: string,
+  type: EventType,
+  deadline: Date,
+  source: "gmail" | "classroom" | "custom" | "calendar",
+  sourceId?: string,
+  metadata?: { difficulty?: number; enjoyment?: number },
+  db: Queryable = pool
+): Promise<Event> {
     try {
       const daysUntilDeadline = Math.ceil(
         (deadline.getTime() - Date.now()) / (1000 * 60 * 60 * 24)
       );
 
-      const result = await pool.query(
+      const result = await db.query(
         `INSERT INTO events 
-        (user_id, title, description, type, deadline, days_until_deadline, source, source_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        (user_id, title, description, type, deadline, days_until_deadline, source, source_id, metadata)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         RETURNING *`,
         [
-          userId,
-          title,
-          description,
-          type,
-          deadline,
-          Math.max(0, daysUntilDeadline),
-          source,
-          sourceId || null,
-        ]
+        userId,
+        title,
+        description,
+        type,
+        deadline,
+        Math.max(0, daysUntilDeadline),
+        source,
+        sourceId || null,
+        metadata || null,
+      ]
       );
 
       const row = result.rows[0];

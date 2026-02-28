@@ -6,6 +6,7 @@ import { LLMService } from "../services/llm.service";
 import { EventService } from "../services/event.service";
 import { EmbeddingService } from "../services/embedding.service";
 import { ExtractionInput } from "../types";
+import { getEnergyLevel } from "../utils/energy";
 
 const userService = new UserService();
 const emailService = new EmailService();
@@ -125,10 +126,8 @@ export const getWidgetData = async (req: Request, res: Response) => {
     }
 
     // Get the next upcoming event
-    const upcomingEvents = await eventService.getUpcomingEvents(
-      userId as string,
-      1
-    );
+    const energy = getEnergyLevel();
+    const upcomingEvents = await eventService.getUpcomingEvents(userId as string, 7);
 
     if (upcomingEvents.length === 0) {
       return res.json({
@@ -137,7 +136,53 @@ export const getWidgetData = async (req: Request, res: Response) => {
       });
     }
 
-    const nextEvent = upcomingEvents[0];
+    const memoryQuery = upcomingEvents
+      .map((event) => `${event.title} ${event.description || ""}`)
+      .join("\n");
+
+    const memories = await embeddingService.retrieveSimilarMemories(
+      userId as string,
+      memoryQuery,
+      5
+    );
+
+    const ranked = upcomingEvents
+      .map(event => {
+        const difficulty = event.metadata?.difficulty ?? 3;
+        const enjoyment = event.metadata?.enjoyment ?? 3;
+
+        let score = 0;
+
+        // urgency boost
+        score += Math.max(0, 10 - event.daysUntilDeadline);
+
+        // energy adjustment
+        if (energy === "very_low") {
+          score -= difficulty * 2.5;
+          score += enjoyment * 2;
+        } else if (energy === "low") {
+          score -= difficulty * 1.5;
+          score += enjoyment * 1.25;
+        }
+
+        return { event, score };
+      })
+      .sort((a, b) => b.score - a.score);
+
+    const candidateEvents = ranked.slice(0, Math.min(3, ranked.length)).map((r) => r.event);
+
+    let nextEvent = ranked[0].event;
+
+    if (candidateEvents.length > 1) {
+      const chosenId = await llmService.chooseBestEvent(
+        candidateEvents,
+        memories.map((m) => m.content),
+        energy
+      );
+
+      const chosen = candidateEvents.find((event) => event.id === chosenId);
+      nextEvent = chosen || ranked[0].event;
+    }
 
     res.json({
       oneThing: `Focus on: ${nextEvent.title}`,
